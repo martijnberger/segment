@@ -15,30 +15,39 @@ const MAX_BATCH_SIZE: usize = 1024 * 500;
 ///
 /// ```
 /// use segment::{Batcher, Client, HttpClient};
-/// use segment::message::{BatchMessage, Track, User};
+/// use segment::message::{Track, User};
 /// use serde_json::json;
 ///
-/// let mut batcher = Batcher::new(None);
-/// let client = HttpClient::default();
+/// #[tokio::main(flavor = "current_thread")]
+/// async fn main() -> segment::Result<()> {
+///     let mut batcher = Batcher::new(None);
+///     let client = HttpClient::default();
+///     let write_key = "your_write_key";
 ///
-/// for i in 0..100 {
-///     let msg = Track {
-///         user: User::UserId { user_id: format!("user-{}", i) },
-///         event: "Example".to_owned(),
-///         properties: json!({ "foo": "bar" }),
-///         ..Default::default()
-///     };
+///     for i in 0..100 {
+///         let msg = Track {
+///             user: User::UserId { user_id: format!("user-{}", i) },
+///             event: "Example".to_owned(),
+///             properties: json!({ "foo": "bar" }),
+///             ..Default::default()
+///         };
 ///
-///     // Batcher returns back ownership of a message if the internal buffer
-///     // would overflow.
-///     //
-///     // When this occurs, we flush the batcher, create a new batcher, and add
-///     // the message into the new batcher.
-///     if let Some(msg) = batcher.push(msg).unwrap() {
-///         client.send("your_write_key".to_string(), batcher.into_message());
-///         batcher = Batcher::new(None);
-///         batcher.push(msg).unwrap();
+///         // Batcher returns back ownership of a message if the internal buffer
+///         // would overflow.
+///         //
+///         // When this occurs, we flush the batcher, create a new batcher, and add
+///         // the message into the new batcher.
+///         if let Some(msg) = batcher.push(msg)? {
+///             client.send(write_key, batcher.into_message()).await?;
+///             batcher = Batcher::new(None);
+///             batcher.push(msg)?;
+///         }
 ///     }
+///
+///     if !batcher.is_empty() {
+///         client.send(write_key, batcher.into_message()).await?;
+///     }
+///     Ok(())
 /// }
 /// ```
 ///
@@ -50,10 +59,10 @@ const MAX_BATCH_SIZE: usize = 1024 * 500;
 /// If this delay is a concern, it is recommended that you periodically flush
 /// the batcher on your own by calling `into_message`.
 ///
-/// By default if the message you push in the batcher does not contains any
+/// By default if the message you push in the batcher does not contain any
 /// timestamp, the timestamp at the time of the push will be automatically
 /// added to your message.
-/// You can disable this behaviour with the [without_auto_timestamp] method
+/// You can disable this behaviour with the [`Self::without_auto_timestamp`] method
 /// though.
 #[derive(Clone, Debug)]
 pub struct Batcher {
@@ -108,11 +117,12 @@ impl Batcher {
             return Err(Error::MessageTooLarge);
         }
 
-        self.byte_count += size + 1; // +1 to account for Serialized data's extra commas
-        if self.byte_count > MAX_BATCH_SIZE {
+        let byte_count = self.byte_count + size + 1; // +1 to account for serialized data's extra commas
+        if byte_count > MAX_BATCH_SIZE {
             return Ok(Some(msg));
         }
 
+        self.byte_count = byte_count;
         self.buf.push(msg);
         Ok(None)
     }
@@ -153,14 +163,14 @@ mod tests {
         let mut batcher = Batcher::new(Some(context.clone()));
         batcher.without_auto_timestamp();
         let result = batcher.push(batch_msg.clone());
-        assert_eq!(None, result.ok().unwrap());
+        assert_eq!(None, result.expect("message should be accepted"));
 
         let batch = batcher.into_message();
         let inner_batch = match batch {
             Message::Batch(b) => b,
             _ => panic!("invalid message type"),
         };
-        assert_eq!(context, inner_batch.context.unwrap());
+        assert_eq!(context, inner_batch.context.expect("context should be set"));
         assert_eq!(1, inner_batch.batch.len());
 
         assert_eq!(inner_batch.batch, vec![batch_msg]);
@@ -170,7 +180,8 @@ mod tests {
     fn test_bad_message_size() {
         let batch_msg = Track {
             user: User::UserId {
-                user_id: String::from_utf8(vec![b'a'; 1024 * 33]).unwrap(),
+                user_id: String::from_utf8(vec![b'a'; 1024 * 33])
+                    .expect("test data should be valid UTF-8"),
             },
             ..Default::default()
         };
@@ -178,7 +189,7 @@ mod tests {
         let mut batcher = Batcher::new(None);
         let result = batcher.push(batch_msg);
 
-        let err = result.err().unwrap();
+        let err = result.expect_err("message should be too large");
         assert!(err.to_string().contains("message too large"));
     }
 
@@ -186,7 +197,8 @@ mod tests {
     fn test_max_buffer() {
         let batch_msg = Track {
             user: User::UserId {
-                user_id: String::from_utf8(vec![b'a'; 1024 * 30]).unwrap(),
+                user_id: String::from_utf8(vec![b'a'; 1024 * 30])
+                    .expect("test data should be valid UTF-8"),
             },
             ..Default::default()
         };
@@ -196,13 +208,43 @@ mod tests {
         let mut result = Ok(None);
         for _i in 0..20 {
             result = batcher.push(batch_msg.clone());
-            dbg!(&result);
-            if result.is_ok() && result.as_ref().ok().unwrap().is_some() {
+            if result
+                .as_ref()
+                .expect("message should not be individually too large")
+                .is_some()
+            {
                 break;
             }
         }
 
-        let msg = result.ok().unwrap();
-        assert_eq!(BatchMessage::from(batch_msg), msg.unwrap());
+        let msg = result
+            .expect("message should not be individually too large")
+            .expect("message should be returned when the batch is full");
+        assert_eq!(BatchMessage::from(batch_msg), msg);
+    }
+
+    #[test]
+    fn rejected_message_does_not_change_byte_count() {
+        let batch_msg = Track {
+            user: User::UserId {
+                user_id: String::from_utf8(vec![b'a'; 1024 * 30])
+                    .expect("test data should be valid UTF-8"),
+            },
+            ..Default::default()
+        };
+
+        let mut batcher = Batcher::new(None);
+        batcher.without_auto_timestamp();
+
+        loop {
+            let byte_count = batcher.byte_count;
+            let result = batcher
+                .push(batch_msg.clone())
+                .expect("message should not be individually too large");
+            if result.is_some() {
+                assert_eq!(batcher.byte_count, byte_count);
+                break;
+            }
+        }
     }
 }

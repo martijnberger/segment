@@ -6,7 +6,7 @@ use segment::{Batcher, Client, HttpClient};
 use serde_json::json;
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() {
+async fn main() -> segment::Result<()> {
     let write_key = "YOUR_WRITE_KEY";
 
     let client = HttpClient::default();
@@ -29,19 +29,17 @@ async fn main() {
         // An error here indicates a message is too large. In real life, you
         // would probably want to put this message in a deadletter queue or some
         // equivalent.
-        if let Some(msg) = batcher.push(msg).unwrap() {
-            client
-                .send(write_key.to_string(), batcher.into_message())
-                .await
-                .unwrap();
+        if let Some(msg) = batcher.push(msg)? {
+            client.send(write_key, batcher.into_message()).await?;
 
             batcher = Batcher::new(None);
-            batcher.push(msg).unwrap(); // Same error condition as above.
+            batcher.push(msg)?; // Same error condition as above.
         }
     }
 
-    client
-        .send(write_key.to_string(), batcher.into_message())
-        .await
-        .unwrap();
+    if !batcher.is_empty() {
+        client.send(write_key, batcher.into_message()).await?;
+    }
+
+    Ok(())
 }

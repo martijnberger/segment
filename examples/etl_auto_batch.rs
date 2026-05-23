@@ -6,12 +6,12 @@ use segment::{AutoBatcher, Batcher, HttpClient};
 use serde_json::json;
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() {
+async fn main() -> segment::Result<()> {
     let write_key = "YOUR_WRITE_KEY";
 
     let client = HttpClient::default();
     let batcher = Batcher::new(None);
-    let mut batcher = AutoBatcher::new(client, batcher, write_key.to_string());
+    let mut batcher = AutoBatcher::new(client, batcher, write_key);
 
     // Pretend this is reading off of a queue, a file, or some other data
     // source.
@@ -27,8 +27,9 @@ async fn main() {
             ..Default::default()
         };
 
-        batcher.push(msg).await.unwrap();
+        batcher.push(msg).await?;
     }
 
-    batcher.flush().await.unwrap();
+    batcher.flush().await?;
+    Ok(())
 }

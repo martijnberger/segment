@@ -5,13 +5,13 @@ use segment::{Client, HttpClient};
 use serde_json::json;
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() {
+async fn main() -> segment::Result<()> {
     let write_key = "YOUR_WRITE_KEY";
 
     let client = HttpClient::default();
     client
         .send(
-            write_key.to_string(),
+            write_key,
             Track {
                 user: User::UserId {
                     user_id: "some_user_id".to_owned(),
@@ -27,4 +27,6 @@ async fn main() {
         )
         .await
         .expect("could not send to Segment");
+
+    Ok(())
 }

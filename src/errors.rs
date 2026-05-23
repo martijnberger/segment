@@ -2,8 +2,7 @@
 
 use thiserror::Error;
 
-/// An enum of errors this crate may produce. These are compatible with
-/// `failure` errors.
+/// An enum of errors this crate may produce.
 #[derive(Error, Debug)]
 pub enum Error {
     /// The given message is too large to be sent to Segment's API.

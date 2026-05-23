@@ -18,22 +18,28 @@ use crate::{
 ///
 /// ```
 /// use segment::{AutoBatcher, Batcher, HttpClient};
-/// use segment::message::{BatchMessage, Track, User};
+/// use segment::message::{Track, User};
 /// use serde_json::json;
 ///
-/// let client = HttpClient::default();
-/// let batcher= Batcher::new(None);
-/// let mut batcher = AutoBatcher::new(client, batcher, "your_write_key".to_string());
+/// #[tokio::main(flavor = "current_thread")]
+/// async fn main() -> segment::Result<()> {
+///     let client = HttpClient::default();
+///     let batcher = Batcher::new(None);
+///     let mut batcher = AutoBatcher::new(client, batcher, "your_write_key");
 ///
-/// for i in 0..100 {
-///     let msg = Track {
-///         user: User::UserId { user_id: format!("user-{}", i) },
-///         event: "Example".to_owned(),
-///         properties: json!({ "foo": "bar" }),
-///         ..Default::default()
-///     };
+///     for i in 0..100 {
+///         let msg = Track {
+///             user: User::UserId { user_id: format!("user-{}", i) },
+///             event: "Example".to_owned(),
+///             properties: json!({ "foo": "bar" }),
+///             ..Default::default()
+///         };
 ///
-///     batcher.push(msg); // .await
+///         batcher.push(msg).await?;
+///     }
+///
+///     batcher.flush().await?;
+///     Ok(())
 /// }
 /// ```
 ///
@@ -45,13 +51,16 @@ use crate::{
 /// If this delay is a concern, it is recommended that you periodically flush
 /// the batcher on your own by calling [Self::flush].
 #[derive(Clone, Debug)]
-pub struct AutoBatcher {
-    client: HttpClient,
+pub struct AutoBatcher<C = HttpClient> {
+    client: C,
     batcher: Batcher,
     key: String,
 }
 
-impl AutoBatcher {
+impl<C> AutoBatcher<C>
+where
+    C: Client,
+{
     /// Construct a new, empty batcher.
     ///
     /// ```
@@ -59,13 +68,13 @@ impl AutoBatcher {
     ///
     /// let client = HttpClient::default();
     /// let batcher = Batcher::new(None);
-    /// let mut batcher = AutoBatcher::new(client, batcher, "your_write_key".to_string());
+    /// let mut batcher = AutoBatcher::new(client, batcher, "your_write_key");
     /// ```
-    pub fn new(client: HttpClient, batcher: Batcher, key: String) -> Self {
+    pub fn new(client: C, batcher: Batcher, key: impl Into<String>) -> Self {
         Self {
             batcher,
             client,
-            key,
+            key: key.into(),
         }
     }
 
@@ -78,20 +87,25 @@ impl AutoBatcher {
     /// ```
     /// use serde_json::json;
     /// use segment::{AutoBatcher, Batcher, HttpClient};
-    /// use segment::message::{BatchMessage, Track, User};
+    /// use segment::message::{Track, User};
     ///
-    /// let client = HttpClient::default();
-    /// let batcher = Batcher::new(None);
-    /// let mut batcher = AutoBatcher::new(client, batcher, "your_write_key".to_string());
+    /// #[tokio::main(flavor = "current_thread")]
+    /// async fn main() -> segment::Result<()> {
+    ///     let client = HttpClient::default();
+    ///     let batcher = Batcher::new(None);
+    ///     let mut batcher = AutoBatcher::new(client, batcher, "your_write_key");
     ///
-    /// let msg = BatchMessage::Track(Track {
-    ///     user: User::UserId { user_id: String::from("user") },
-    ///     event: "Example".to_owned(),
-    ///     properties: json!({ "foo": "bar" }),
-    ///     ..Default::default()
-    /// });
+    ///     let msg = Track {
+    ///         user: User::UserId { user_id: String::from("user") },
+    ///         event: "Example".to_owned(),
+    ///         properties: json!({ "foo": "bar" }),
+    ///         ..Default::default()
+    ///     };
     ///
-    /// batcher.push(msg); // .await
+    ///     batcher.push(msg).await?;
+    ///     batcher.flush().await?;
+    ///     Ok(())
+    /// }
     /// ```
     pub async fn push(&mut self, msg: impl Into<BatchMessage>) -> Result<()> {
         if let Some(msg) = self.batcher.push(msg)? {
@@ -111,21 +125,25 @@ impl AutoBatcher {
     /// ```
     /// use serde_json::json;
     /// use segment::{AutoBatcher, Batcher, HttpClient};
-    /// use segment::message::{BatchMessage, Track, User};
+    /// use segment::message::{Track, User};
     ///
-    /// let client = HttpClient::default();
-    /// let batcher = Batcher::new(None);
-    /// let mut batcher = AutoBatcher::new(client, batcher, "your_write_key".to_string());
+    /// #[tokio::main(flavor = "current_thread")]
+    /// async fn main() -> segment::Result<()> {
+    ///     let client = HttpClient::default();
+    ///     let batcher = Batcher::new(None);
+    ///     let mut batcher = AutoBatcher::new(client, batcher, "your_write_key");
     ///
-    /// let msg = BatchMessage::Track(Track {
-    ///     user: User::UserId { user_id: String::from("user") },
-    ///     event: "Example".to_owned(),
-    ///     properties: json!({ "foo": "bar" }),
-    ///     ..Default::default()
-    /// });
+    ///     let msg = Track {
+    ///         user: User::UserId { user_id: String::from("user") },
+    ///         event: "Example".to_owned(),
+    ///         properties: json!({ "foo": "bar" }),
+    ///         ..Default::default()
+    ///     };
     ///
-    /// batcher.push(msg); // .await
-    /// batcher.flush(); // .await
+    ///     batcher.push(msg).await?;
+    ///     batcher.flush().await?;
+    ///     Ok(())
+    /// }
     /// ```
     pub async fn flush(&mut self) -> Result<()> {
         if self.batcher.is_empty() {
@@ -139,7 +157,66 @@ impl AutoBatcher {
             extra: Map::default(),
         });
 
-        self.client.send(self.key.to_string(), message).await?;
+        self.client.send(&self.key, message).await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::message::{Track, User};
+
+    #[derive(Clone, Debug)]
+    struct RecordingClient {
+        sent: Arc<Mutex<Vec<(String, Message)>>>,
+    }
+
+    impl Client for RecordingClient {
+        fn send<'a>(
+            &'a self,
+            write_key: &'a str,
+            msg: Message,
+        ) -> impl std::future::Future<Output = Result<()>> + Send + 'a {
+            self.sent
+                .lock()
+                .expect("recording client lock was poisoned")
+                .push((write_key.to_owned(), msg));
+            std::future::ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn flush_uses_custom_client() {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let client = RecordingClient {
+            sent: Arc::clone(&sent),
+        };
+        let mut batcher = AutoBatcher::new(client, Batcher::new(None), "write-key");
+
+        batcher
+            .push(Track {
+                user: User::UserId {
+                    user_id: "user".to_owned(),
+                },
+                event: "Example".to_owned(),
+                properties: json!({ "foo": "bar" }),
+                ..Default::default()
+            })
+            .await
+            .expect("message should be accepted");
+        batcher.flush().await.expect("batch should flush");
+
+        let sent = sent.lock().expect("recording client lock was poisoned");
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].0, "write-key");
+        let Message::Batch(batch) = &sent[0].1 else {
+            panic!("expected a batch message");
+        };
+        assert_eq!(batch.batch.len(), 1);
     }
 }

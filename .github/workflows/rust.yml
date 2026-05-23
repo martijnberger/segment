@@ -10,58 +10,61 @@ env:
 
 jobs:
   tests:
-    name: Tests on ${{ matrix.os }}
+    name: Tests on ${{ matrix.os }} / Rust ${{ matrix.toolchain }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-20.04, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        toolchain: ["1.85", stable]
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.toolchain }}
     - name: Cache dependencies
-      uses: Swatinem/rust-cache@v1.3.0
-    - name: Run cargo check without any default features
-      uses: actions-rs/cargo@v1
-      with:
-        command: build
-        args: --release --no-default-features
+      uses: Swatinem/rust-cache@v2
     - name: Run cargo test
-      uses: actions-rs/cargo@v1
-      with:
-        command: test
-        args: --release
+      run: cargo test --release
+    - name: Build without default features
+      run: cargo build --release --no-default-features
+    - name: Test rustls feature
+      run: cargo test --release --no-default-features --features rustls-tls
+    - name: Test native TLS feature
+      run: cargo test --release --no-default-features --features native-tls
 
   clippy:
-    name: Run Clippy
-    runs-on: ubuntu-20.04
+    name: Run Clippy / Rust ${{ matrix.toolchain }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: ["1.85", stable]
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
-          toolchain: stable
-          override: true
+          toolchain: ${{ matrix.toolchain }}
           components: clippy
       - name: Cache dependencies
-        uses: Swatinem/rust-cache@v1.3.0
+        uses: Swatinem/rust-cache@v2
       - name: Run cargo clippy
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --all-targets -- --deny warnings
+        run: cargo clippy --all-targets --all-features -- --deny warnings
 
   fmt:
-    name: Run Rustfmt
-    runs-on: ubuntu-20.04
+    name: Run Rustfmt / Rust ${{ matrix.toolchain }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: ["1.85", stable]
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
-          toolchain: nightly
-          override: true
+          toolchain: ${{ matrix.toolchain }}
           components: rustfmt
       - name: Cache dependencies
-        uses: Swatinem/rust-cache@v1.3.0
+        uses: Swatinem/rust-cache@v2
       - name: Run cargo fmt
         run: cargo fmt --all -- --check

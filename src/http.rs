@@ -8,8 +8,8 @@ use std::time::Duration;
 /// A client which synchronously sends single messages to the Segment tracking
 /// API.
 ///
-/// `HttpClient` implements [`Client`](../client/trait.Client.html); see the
-/// documentation for `Client` for more on how to send events to Segment.
+/// `HttpClient` implements [`Client`]; see that trait for more on how to send
+/// events to Segment.
 #[derive(Clone, Debug)]
 pub struct HttpClient {
     client: reqwest::Client,
@@ -22,7 +22,7 @@ impl Default for HttpClient {
             client: reqwest::Client::builder()
                 .connect_timeout(Duration::new(10, 0))
                 .build()
-                .unwrap(),
+                .expect("failed to build default reqwest client"),
             host: "https://api.segment.io".to_owned(),
         }
     }
@@ -35,14 +35,16 @@ impl HttpClient {
     /// If you don't care to re-use an existing `reqwest::Client`, you can use
     /// the `Default::default` value, which will send events to
     /// `https://api.segment.io`.
-    pub fn new(client: reqwest::Client, host: String) -> HttpClient {
-        HttpClient { client, host }
+    pub fn new(client: reqwest::Client, host: impl Into<String>) -> HttpClient {
+        HttpClient {
+            client,
+            host: host.into(),
+        }
     }
 }
 
-#[async_trait::async_trait]
 impl Client for HttpClient {
-    async fn send(&self, write_key: String, msg: Message) -> Result<()> {
+    async fn send<'a>(&'a self, write_key: &'a str, msg: Message) -> Result<()> {
         let path = match msg {
             Message::Identify(_) => "/v1/identify",
             Message::Track(_) => "/v1/track",
@@ -53,8 +55,7 @@ impl Client for HttpClient {
             Message::Batch(_) => "/v1/batch",
         };
 
-        let _ = self
-            .client
+        self.client
             .post(format!("{}{}", self.host, path))
             .basic_auth(write_key, Some(""))
             .json(&msg)

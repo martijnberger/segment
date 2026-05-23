@@ -3,7 +3,7 @@
 //! All Segment messages support a few common fields:
 //!
 //! * Details related to user identification are captured by this library
-//!   through the [`User`](enum.User.html) enum.
+//!   through the [`User`] enum.
 //!
 //! * Some user traits and event properties are specified through the Segment
 //!   spec -- these are standardized members which, if followed, will be
@@ -346,9 +346,9 @@ impl Display for User {
     /// Display a `UserId`. If he has both an `anonymous_id` and a `user_id` we display the `user_id`
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            User::UserId { user_id } => write!(f, "{}", user_id),
-            User::AnonymousId { anonymous_id } => write!(f, "{}", anonymous_id),
-            User::Both { user_id, .. } => write!(f, "{}", user_id),
+            User::UserId { user_id } => f.write_str(user_id),
+            User::AnonymousId { anonymous_id } => f.write_str(anonymous_id),
+            User::Both { user_id, .. } => f.write_str(user_id),
         }
     }
 }
